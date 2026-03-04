@@ -1,0 +1,64 @@
+# TDA-CAR-T Analysis Configuration
+# Default parameters for the analysis pipeline
+
+preprocessing:
+  min_genes: 200
+  min_cells: 3
+  max_mito_pct: 20.0
+  n_top_genes: 2000
+  n_pcs: 50
+  n_neighbors: 15
+  leiden_resolution: 1.0
+
+tda:
+  maxdim: 2
+  coeff: 2
+  metric: euclidean
+  # thresh: auto (percentile-based)
+  representation: pca
+  n_components: 20
+  # Persistence landscapes
+  num_landscapes: 5
+  landscape_resolution: 1000
+  # Persistence images
+  pi_resolution: [20, 20]
+  pi_sigma: 0.1
+
+mapper:
+  lens_fn: pca_1
+  n_cubes: 15
+  overlap: 0.3
+  clusterer: dbscan
+  dbscan_eps: 0.5
+  dbscan_min_samples: 3
+
+metabolic:
+  pathways:
+    - glycolysis
+    - oxidative_phosphorylation
+    - fatty_acid_oxidation
+    - glutaminolysis
+    - pentose_phosphate
+
+simulation:
+  n_cells: 5000
+  n_genes: 2000
+  noise_level: 0.3
+  n_responders: 5
+  n_non_responders: 5
+  seed: 42
+
+# Public datasets for validation
+datasets:
+  - name: "Fraietta2018"
+    description: "CD19 CAR-T in CLL (Fraietta et al., Nature Medicine 2018)"
+    geo_accession: "GSE117556"
+    notes: "Leukapheresis and infusion product characterization"
+  - name: "Deng2020"
+    description: "CD19 CAR-T longitudinal scRNA-seq"
+    geo_accession: "GSE151511"
+    notes: "Pre/post-infusion with clinical response data"
+  - name: "Haradhvala2022"
+    description: "CAR-T determinants of response (Haradhvala et al., Nature Medicine 2022)"
+    geo_accession: "GSE197268"
+    notes: "Large cohort with clinical outcomes"
