@@ -14,7 +14,12 @@ Usage:
 """
 
 import sys
-sys.path.insert(0, ".")
+from pathlib import Path
+
+# Auto-detect project root (works regardless of where you run from)
+_this_file = Path(__file__).resolve()
+_project_root = _this_file.parent.parent
+sys.path.insert(0, str(_project_root))
 
 import numpy as np
 from sklearn.cluster import DBSCAN

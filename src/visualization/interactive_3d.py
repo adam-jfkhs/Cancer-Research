@@ -640,7 +640,9 @@ def generate_all_visualizations(output_dir="data/visualizations"):
         Paths to generated HTML files.
     """
     import sys
-    sys.path.insert(0, ".")
+    _project_root = str(Path(__file__).resolve().parent.parent.parent)
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
 
     from src.simulation.synthetic_cart import CARTSimulator
     from src.tda.persistent_homology import compute_persistence
