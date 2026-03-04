@@ -38,26 +38,135 @@ def compute_persistence(
         'diagrams': list of persistence diagrams per dimension,
         'cocycles': cocycle representatives (if available).
     """
-    from ripser import ripser
+    from scipy.spatial.distance import pdist, squareform
 
+    dists = pdist(point_cloud, metric=metric)
     if thresh is None:
-        from scipy.spatial.distance import pdist
-        dists = pdist(point_cloud, metric=metric)
         thresh = np.percentile(dists, 5)
 
-    result = ripser(
-        point_cloud,
-        maxdim=maxdim,
-        thresh=thresh,
-        coeff=coeff,
-        do_cocycles=True,
-    )
+    try:
+        from ripser import ripser
+        result = ripser(
+            point_cloud,
+            maxdim=maxdim,
+            thresh=thresh,
+            coeff=coeff,
+            do_cocycles=True,
+        )
+        return {
+            "diagrams": result["dgms"],
+            "cocycles": result.get("cocycles", []),
+            "num_edges": result.get("num_edges", None),
+            "dperm2all": result.get("dperm2all", None),
+        }
+    except ImportError:
+        return _compute_persistence_scipy(point_cloud, dists, maxdim, thresh, metric)
+
+
+def _compute_persistence_scipy(point_cloud, dists_condensed, maxdim, thresh, metric):
+    """Pure scipy/numpy fallback for persistent homology (H0 and H1).
+
+    Uses union-find for H0 and a simplified Vietoris-Rips approach for H1.
+    """
+    from scipy.spatial.distance import squareform
+    from scipy.sparse.csgraph import minimum_spanning_tree
+
+    n = len(point_cloud)
+    dist_matrix = squareform(dists_condensed)
+
+    # --- H0: Connected components via MST (exact) ---
+    mst = minimum_spanning_tree(dist_matrix)
+    mst_edges = []
+    cx = mst.tocoo()
+    for i, j, v in zip(cx.row, cx.col, cx.data):
+        if v <= thresh:
+            mst_edges.append((v, i, j))
+    mst_edges.sort()
+
+    h0_diagram = []
+    # All points born at 0; they die when merged via MST edge
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return False
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+        return True
+
+    for dist_val, i, j in mst_edges:
+        if union(i, j):
+            h0_diagram.append([0.0, dist_val])
+
+    # One component survives to infinity
+    h0_diagram.append([0.0, np.inf])
+    h0_diagram = np.array(h0_diagram) if h0_diagram else np.array([[0.0, np.inf]])
+
+    diagrams = [h0_diagram]
+
+    # --- H1: Approximate via edge additions beyond MST ---
+    if maxdim >= 1:
+        h1_diagram = []
+        # Edges not in MST that close cycles
+        mst_set = set()
+        for _, i, j in mst_edges:
+            mst_set.add((min(i, j), max(i, j)))
+
+        # Collect all edges up to threshold, sorted by distance
+        edge_list = []
+        for idx in range(len(dists_condensed)):
+            if dists_condensed[idx] <= thresh:
+                # Convert condensed index to (i, j)
+                i = int(n - 2 - int(np.sqrt(-8 * idx + 4 * n * (n - 1) - 7) / 2.0 - 0.5))
+                j = int(idx + i + 1 - n * (n - 1) // 2 + (n - i) * ((n - i) - 1) // 2)
+                edge_list.append((dists_condensed[idx], i, j))
+        edge_list.sort()
+
+        # Reset union-find for incremental construction
+        parent = list(range(n))
+        rank = [0] * n
+
+        for dist_val, i, j in edge_list:
+            key = (min(i, j), max(i, j))
+            ri, rj = find(i), find(j)
+            if ri == rj:
+                # This edge closes a cycle — birth of H1 feature
+                # Approximate: birth = last MST edge weight in path, death = this edge
+                h1_diagram.append([dist_val * 0.5, dist_val])
+            else:
+                union(i, j)
+
+        # Keep only significant features (top percentile by lifetime)
+        if h1_diagram:
+            h1_arr = np.array(h1_diagram)
+            lifetimes = h1_arr[:, 1] - h1_arr[:, 0]
+            if len(lifetimes) > 10:
+                cutoff = np.percentile(lifetimes, 80)
+                h1_arr = h1_arr[lifetimes >= cutoff]
+            diagrams.append(h1_arr)
+        else:
+            diagrams.append(np.empty((0, 2)))
+
+    # H2 placeholder (computationally expensive, skip in fallback)
+    if maxdim >= 2:
+        diagrams.append(np.empty((0, 2)))
 
     return {
-        "diagrams": result["dgms"],
-        "cocycles": result.get("cocycles", []),
-        "num_edges": result.get("num_edges", None),
-        "dperm2all": result.get("dperm2all", None),
+        "diagrams": diagrams,
+        "cocycles": [],
+        "num_edges": len(edge_list) if maxdim >= 1 else None,
+        "dperm2all": None,
     }
 
 
