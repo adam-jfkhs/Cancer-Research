@@ -362,28 +362,73 @@ def load_counts_csv(path: str):
 
 
 def _extract_tar_if_needed(data_dir: Path):
-    """Auto-extract .tar files in data_dir if not already extracted."""
-    for tar_file in data_dir.glob("*.tar"):
-        # Check if already extracted (look for .h5 or .mtx.gz files)
-        h5_files = list(data_dir.glob("*.h5")) + list(data_dir.rglob("GSM*/*.h5"))
-        gz_files = list(data_dir.glob("*.h5.gz")) + list(data_dir.glob("*.mtx.gz"))
-        if h5_files or gz_files:
-            print(f"  .tar already extracted ({len(h5_files)} h5 + {len(gz_files)} gz files found)")
-            return
+    """Auto-extract .tar files in data_dir if not already extracted.
 
-        print(f"  Extracting {tar_file.name} ({tar_file.stat().st_size / 1e9:.1f} GB)...")
-        print(f"  This may take a few minutes...")
-        with tarfile.open(tar_file) as tf:
+    Handles the nested GEO archive structure:
+      GSE197268_RAW.tar → GSM*.tar.gz → GSM*.tar → (h5/mtx files inside)
+    """
+    # Check if already fully extracted (h5 files exist in subdirectories)
+    h5_in_subdirs = list(data_dir.rglob("GSM*/*.h5"))
+    mtx_in_subdirs = list(data_dir.rglob("GSM*/matrix.mtx*"))
+    if h5_in_subdirs or mtx_in_subdirs:
+        print(f"  Data already extracted ({len(h5_in_subdirs)} h5 files found)")
+        return
+
+    # Step 1: Extract the main _RAW.tar if present
+    for raw_tar in data_dir.glob("*_RAW.tar"):
+        print(f"  Extracting {raw_tar.name} ({raw_tar.stat().st_size / 1e9:.1f} GB)...")
+        with tarfile.open(raw_tar) as tf:
             tf.extractall(data_dir)
-        print(f"  Extraction complete.")
+        print(f"  Main tar extracted.")
 
-    # Decompress any .h5.gz files
-    for gz_file in data_dir.rglob("*.gz"):
-        out = gz_file.with_suffix("")  # remove .gz
+    # Step 2: Decompress .tar.gz → .tar (GEO wraps each sample in tar.gz)
+    tar_gz_files = list(data_dir.glob("GSM*.tar.gz"))
+    if tar_gz_files:
+        print(f"  Decompressing {len(tar_gz_files)} sample archives...")
+        for gz_file in sorted(tar_gz_files):
+            out = gz_file.with_suffix("")  # .tar.gz → .tar
+            if not out.exists():
+                with gzip.open(gz_file, "rb") as f_in, open(out, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+
+    # Step 3: Extract each per-sample .tar into a GSM* subdirectory
+    sample_tars = sorted(data_dir.glob("GSM*.tar"))
+    if sample_tars:
+        print(f"  Extracting {len(sample_tars)} sample tar files...")
+        for i, sample_tar in enumerate(sample_tars):
+            # Create subdirectory named by GSM ID
+            # Filename: GSM5911983_Patient1-Infusion.tar
+            gsm_id = sample_tar.stem.split("_")[0]
+            sample_dir = data_dir / gsm_id
+            sample_dir.mkdir(exist_ok=True)
+
+            try:
+                with tarfile.open(sample_tar) as tf:
+                    tf.extractall(sample_dir)
+            except tarfile.ReadError:
+                # Not a valid tar — might be a plain h5 file renamed
+                # Move it into the sample dir as-is
+                dest = sample_dir / (sample_tar.stem + ".h5")
+                if not dest.exists():
+                    shutil.copy2(sample_tar, dest)
+
+            if (i + 1) % 20 == 0:
+                print(f"    Extracted {i+1}/{len(sample_tars)} samples...")
+
+        print(f"  All {len(sample_tars)} samples extracted.")
+
+    # Step 4: Also handle .h5.gz files directly (some datasets use this format)
+    for gz_file in data_dir.rglob("*.h5.gz"):
+        out = gz_file.with_suffix("")
         if not out.exists():
             print(f"  Decompressing {gz_file.name}...")
             with gzip.open(gz_file, "rb") as f_in, open(out, "wb") as f_out:
                 shutil.copyfileobj(f_in, f_out)
+
+    # Verify extraction
+    h5_count = len(list(data_dir.rglob("GSM*/*.h5")))
+    mtx_count = len(list(data_dir.rglob("GSM*/matrix.mtx*")))
+    print(f"  Extraction complete: {h5_count} h5 files, {mtx_count} mtx files")
 
 
 def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
