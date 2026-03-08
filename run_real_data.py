@@ -90,21 +90,110 @@ def run_from_features(dataset_id: str):
     else:
         print("\n  Skipping classification (need both responders and non-responders).")
 
-    # --- Topological comparison ---
+    # --- Statistical tests ---
     if has_both:
+        from scipy.stats import mannwhitneyu, ttest_ind
+        from itertools import compress
+
         r_mask = feature_df["label"] == "responder"
         nr_mask = feature_df["label"] == "non_responder"
+        n_r = r_mask.sum()
+        n_nr = nr_mask.sum()
 
         if r_mask.any() and nr_mask.any():
-            h1_cols = [c for c in feature_df.columns if "H1" in c]
-            print("\n  TOPOLOGICAL COMPARISON (Responder vs Non-Responder):")
-            print(f"  {'Feature':<30} {'Responder':>12} {'Non-Resp':>12} {'Diff':>8}")
-            print(f"  {'-'*62}")
-            for col in h1_cols:
-                r_val = feature_df.loc[r_mask, col].mean()
-                nr_val = feature_df.loc[nr_mask, col].mean()
-                diff = r_val - nr_val
-                print(f"  {col:<30} {r_val:>12.3f} {nr_val:>12.3f} {diff:>+8.3f}")
+            # Test all topological features (H0 and H1)
+            topo_cols = [c for c in feature_df.columns
+                         if c.startswith("H0_") or c.startswith("H1_")]
+
+            print(f"\n  STATISTICAL TESTS (n_responder={n_r}, n_non_responder={n_nr})")
+            print(f"  {'Feature':<25} {'Resp mean':>10} {'NR mean':>10} {'Cohen d':>8} {'MW-U p':>10} {'t-test p':>10} {'Sig':>5}")
+            print(f"  {'-'*80}")
+
+            results = []
+            for col in topo_cols:
+                r_vals = feature_df.loc[r_mask, col].values.astype(float)
+                nr_vals = feature_df.loc[nr_mask, col].values.astype(float)
+
+                r_mean = np.mean(r_vals)
+                nr_mean = np.mean(nr_vals)
+
+                # Cohen's d (pooled std)
+                pooled_std = np.sqrt(
+                    ((len(r_vals) - 1) * np.var(r_vals, ddof=1) +
+                     (len(nr_vals) - 1) * np.var(nr_vals, ddof=1))
+                    / (len(r_vals) + len(nr_vals) - 2)
+                )
+                cohens_d = (r_mean - nr_mean) / pooled_std if pooled_std > 0 else 0.0
+
+                # Mann-Whitney U (non-parametric, better for small n)
+                try:
+                    mw_stat, mw_p = mannwhitneyu(r_vals, nr_vals, alternative="two-sided")
+                except ValueError:
+                    mw_p = 1.0
+
+                # Welch's t-test
+                try:
+                    t_stat, t_p = ttest_ind(r_vals, nr_vals, equal_var=False)
+                except Exception:
+                    t_p = 1.0
+
+                sig = ""
+                if mw_p < 0.001:
+                    sig = "***"
+                elif mw_p < 0.01:
+                    sig = "**"
+                elif mw_p < 0.05:
+                    sig = "*"
+                elif mw_p < 0.10:
+                    sig = "."
+
+                results.append((col, r_mean, nr_mean, cohens_d, mw_p, t_p, sig))
+                print(f"  {col:<25} {r_mean:>10.3f} {nr_mean:>10.3f} {cohens_d:>+8.3f} {mw_p:>10.4f} {t_p:>10.4f} {sig:>5}")
+
+            # Multiple comparison correction (Benjamini-Hochberg)
+            p_vals = [r[4] for r in results]
+            n_tests = len(p_vals)
+            sorted_idx = np.argsort(p_vals)
+            bh_corrected = np.zeros(n_tests)
+            for rank, idx in enumerate(sorted_idx, 1):
+                bh_corrected[idx] = p_vals[idx] * n_tests / rank
+            # Enforce monotonicity
+            for i in range(n_tests - 2, -1, -1):
+                bh_corrected[sorted_idx[i]] = min(
+                    bh_corrected[sorted_idx[i]],
+                    bh_corrected[sorted_idx[i + 1]] if i + 1 < n_tests else 1.0
+                )
+            bh_corrected = np.clip(bh_corrected, 0, 1)
+
+            print(f"\n  AFTER BENJAMINI-HOCHBERG CORRECTION:")
+            print(f"  {'Feature':<25} {'Raw p':>10} {'Adj p (BH)':>12} {'Sig':>5}")
+            print(f"  {'-'*55}")
+            for i, (col, r_mean, nr_mean, d, mw_p, t_p, _) in enumerate(results):
+                adj_p = bh_corrected[i]
+                sig = ""
+                if adj_p < 0.001:
+                    sig = "***"
+                elif adj_p < 0.01:
+                    sig = "**"
+                elif adj_p < 0.05:
+                    sig = "*"
+                elif adj_p < 0.10:
+                    sig = "."
+                print(f"  {col:<25} {mw_p:>10.4f} {adj_p:>12.4f} {sig:>5}")
+
+            # Summary
+            sig_raw = sum(1 for r in results if r[4] < 0.05)
+            sig_adj = sum(1 for p in bh_corrected if p < 0.05)
+            large_d = sum(1 for r in results if abs(r[3]) >= 0.8)
+            medium_d = sum(1 for r in results if 0.5 <= abs(r[3]) < 0.8)
+
+            print(f"\n  SUMMARY:")
+            print(f"    Features tested: {n_tests}")
+            print(f"    Significant (raw p<0.05): {sig_raw}")
+            print(f"    Significant (BH adj p<0.05): {sig_adj}")
+            print(f"    Large effect size (|d|>=0.8): {large_d}")
+            print(f"    Medium effect size (0.5<=|d|<0.8): {medium_d}")
+            print(f"    Significance: *** p<0.001  ** p<0.01  * p<0.05  . p<0.10")
 
     print("\n" + "=" * 60)
     print("DONE (resumed from saved features)")
