@@ -136,6 +136,77 @@ def get_data_dir(dataset_id: str) -> Path:
     return base
 
 
+def _build_fallback_metadata(dataset_id: str) -> Optional[pd.DataFrame]:
+    """Build metadata from known sample info when GEOparse download fails."""
+    if dataset_id != "GSE197268":
+        return None
+
+    print("  Building metadata from known GSE197268 sample info...")
+
+    # Known GSM→title mapping from GEO (109 samples, 32 patients)
+    _SAMPLES = {
+        "GSM5911983": "Patient1-Infusion", "GSM5911984": "Patient2-D7",
+        "GSM5911985": "Patient2-Infusion", "GSM5911986": "Patient3-Infusion",
+        "GSM5911987": "Patient4-Infusion", "GSM5911988": "Patient4-D7",
+        "GSM5911989": "Patient5-Infusion", "GSM5911990": "Patient6-D7",
+        "GSM5911991": "Patient6-Baseline", "GSM5911992": "Patient6-D7-CART",
+        "GSM5911993": "Patient7-D7", "GSM5911994": "Patient7-D7-CART",
+        "GSM5911995": "Patient7-Infusion", "GSM5911996": "Patient8-D7",
+        "GSM5911997": "Patient8-Baseline", "GSM5911998": "Patient8-Infusion",
+        "GSM5911999": "Patient8-D7-CART", "GSM5912000": "Patient9-Baseline",
+        "GSM5912001": "Patient9-D7", "GSM5912002": "Patient9-Infusion",
+        "GSM5912003": "Patient9-D7-CART", "GSM5912004": "Patient10-Baseline",
+        "GSM5912005": "Patient10-Infusion", "GSM5912006": "Patient10-D7",
+        "GSM5912007": "Patient10-D7-CART", "GSM5912008": "Patient11-D7",
+        "GSM5912009": "Patient11-D7-CART", "GSM5912010": "Patient11-Baseline",
+        "GSM5912011": "Patient11-Infusion", "GSM5912012": "Patient12-D7",
+        "GSM5912013": "Patient12-Baseline", "GSM5912014": "Patient12-Infusion",
+        "GSM5912015": "Patient12-D14", "GSM5912016": "Patient13-Baseline",
+        "GSM5912017": "Patient13-Infusion", "GSM5912018": "Patient13-D7",
+        "GSM5912019": "Patient14-D7", "GSM5912020": "Patient14-D14",
+        "GSM5912021": "Patient14-Infusion", "GSM5912022": "Patient14-Baseline",
+        "GSM5912023": "Patient15-Baseline", "GSM5912024": "Patient15-D7-CART",
+        "GSM5912025": "Patient15-D7", "GSM5912026": "Patient15-Infusion",
+        "GSM5912027": "Patient16-D7-CART", "GSM5912028": "Patient16-Infusion",
+        "GSM5912029": "Patient16-D7", "GSM5912030": "Patient17-Baseline",
+        "GSM5912031": "Patient17-Infusion", "GSM5912032": "Patient17-D7-CART",
+        "GSM5912033": "Patient17-D7", "GSM5912034": "Patient18-D7",
+        "GSM5912035": "Patient18-D7-CART", "GSM5912036": "Patient18-Baseline",
+        "GSM5912037": "Patient18-Infusion", "GSM5912038": "Patient19-Baseline",
+        "GSM5912039": "Patient19-D7-CART", "GSM5912040": "Patient19-D7",
+        "GSM5912041": "Patient19-Infusion", "GSM5912042": "Patient20-D7",
+        "GSM5912043": "Patient20-Infusion", "GSM5912044": "Patient20-Baseline",
+        "GSM5912045": "Patient20-D14", "GSM5912046": "Patient21-D7",
+        "GSM5912047": "Patient21-D14", "GSM5912048": "Patient21-Infusion",
+        "GSM5912049": "Patient21-Baseline", "GSM5912050": "Patient22-D7-CART",
+        "GSM5912051": "Patient22-Baseline", "GSM5912052": "Patient22-D7",
+        "GSM5912053": "Patient22-Infusion", "GSM5912054": "Patient23-Baseline",
+        "GSM5912055": "Patient23-D7-CART", "GSM5912056": "Patient23-Infusion",
+        "GSM5912057": "Patient23-D7", "GSM5912058": "Patient24-D7",
+        "GSM5912059": "Patient24-Baseline", "GSM5912060": "Patient24-Infusion",
+        "GSM5912061": "Patient24-D7-CART", "GSM5912062": "Patient25-Infusion",
+        "GSM5912063": "Patient25-D7", "GSM5912064": "Patient25-D7-CART",
+        "GSM5912065": "Patient25-Baseline", "GSM5912066": "Patient26-D7",
+        "GSM5912067": "Patient26-Infusion", "GSM5912068": "Patient26-D7-CART",
+        "GSM5912069": "Patient27-D7", "GSM5912070": "Patient27-D7-CART",
+        "GSM5912071": "Patient27-Infusion", "GSM5912072": "Patient28-Infusion",
+        "GSM5912073": "Patient28-D7-CART", "GSM5912074": "Patient28-D7",
+        "GSM5912075": "Patient29-D7-retreatment", "GSM5912076": "Patient29-Infusion",
+        "GSM5912077": "Patient29-Infusion-retreatment",
+        "GSM5912078": "Patient29-D7-CART", "GSM5912079": "Patient29-D7",
+        "GSM5912080": "Patient29-D7-CART-retreatment",
+        "GSM5912081": "Patient30-D7-CART", "GSM5912082": "Patient30-D7",
+        "GSM5912083": "Patient30-Infusion", "GSM5912084": "Patient30-Baseline",
+        "GSM5912085": "Patient31-Baseline", "GSM5912086": "Patient31-D7-CART",
+        "GSM5912087": "Patient31-D7", "GSM5912088": "Patient31-Infusion",
+        "GSM5912089": "Patient32-Infusion", "GSM5912090": "Patient32-D7-CART",
+        "GSM5912091": "Patient32-D7",
+    }
+
+    rows = [{"sample_id": gsm, "title": title} for gsm, title in _SAMPLES.items()]
+    return pd.DataFrame(rows).set_index("sample_id")
+
+
 def download_geo_metadata(dataset_id: str, output_dir: Optional[Path] = None) -> pd.DataFrame:
     """Download sample metadata (series matrix) from GEO using GEOparse.
 
@@ -148,32 +219,53 @@ def download_geo_metadata(dataset_id: str, output_dir: Optional[Path] = None) ->
         print(f"  Metadata already cached: {meta_path}")
         return pd.read_csv(meta_path, index_col=0)
 
+    # Try GEOparse first, fall back to built-in metadata if download fails
+    meta = None
     try:
         import GEOparse
+        print(f"  Downloading metadata for {dataset_id} from GEO...")
+        # Retry up to 3 times (NCBI FTP can be flaky)
+        import time
+        for attempt in range(3):
+            try:
+                # Remove partial downloads that may cause size mismatch
+                for partial in output_dir.glob("*.soft.gz"):
+                    partial.unlink()
+                gse = GEOparse.get_GEO(geo=dataset_id, destdir=str(output_dir), silent=True)
+                rows = []
+                for gsm_name, gsm in gse.gsms.items():
+                    row = {"sample_id": gsm_name, "title": gsm.metadata.get("title", [""])[0]}
+                    for ch in gsm.metadata.get("characteristics_ch1", []):
+                        if ":" in ch:
+                            key, val = ch.split(":", 1)
+                            row[key.strip().lower().replace(" ", "_")] = val.strip()
+                    rows.append(row)
+                meta = pd.DataFrame(rows).set_index("sample_id")
+                break
+            except (OSError, ValueError) as e:
+                if attempt < 2:
+                    wait = 2 ** (attempt + 1)
+                    print(f"  Download attempt {attempt+1} failed: {e}")
+                    print(f"  Retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    print(f"  GEOparse download failed after 3 attempts: {e}")
     except ImportError:
-        raise ImportError(
-            "GEOparse is required to download GEO metadata.\n"
-            "Install it with:  pip install GEOparse"
-        )
+        print("  GEOparse not installed, using built-in metadata.")
 
-    print(f"  Downloading metadata for {dataset_id} from GEO...")
-    gse = GEOparse.get_GEO(geo=dataset_id, destdir=str(output_dir), silent=True)
+    # Fallback: build metadata from known sample info (GSE197268)
+    if meta is None:
+        meta = _build_fallback_metadata(dataset_id)
 
-    # Extract sample-level metadata
-    rows = []
-    for gsm_name, gsm in gse.gsms.items():
-        row = {"sample_id": gsm_name, "title": gsm.metadata.get("title", [""])[0]}
-        # Flatten characteristics
-        for ch in gsm.metadata.get("characteristics_ch1", []):
-            if ":" in ch:
-                key, val = ch.split(":", 1)
-                row[key.strip().lower().replace(" ", "_")] = val.strip()
-        rows.append(row)
+    if meta is not None and len(meta) > 0:
+        meta.to_csv(meta_path)
+        print(f"  Saved metadata ({len(meta)} samples) → {meta_path}")
+        return meta
 
-    meta = pd.DataFrame(rows).set_index("sample_id")
-    meta.to_csv(meta_path)
-    print(f"  Saved metadata ({len(meta)} samples) → {meta_path}")
-    return meta
+    raise RuntimeError(
+        f"Could not obtain metadata for {dataset_id}.\n"
+        f"Try: pip install GEOparse  (or check your internet connection)"
+    )
 
 
 def download_geo_supplementary(dataset_id: str, output_dir: Optional[Path] = None) -> Path:
