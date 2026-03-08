@@ -193,7 +193,24 @@ def run_real_analysis(dataset_id: str, download: bool = False):
     has_both = "responder" in labels and "non_responder" in labels
     if has_both and sum(l != "unknown" for l in labels) >= 4:
         print("\n  Running response classification...")
-        from src.pipeline import _classify_response
+        # Inline classifier to avoid importing src.pipeline (which has heavy deps)
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.model_selection import LeaveOneOut, cross_val_score
+
+        def _classify_response(df):
+            X = df.drop(columns=["sample_idx", "label"], errors="ignore")
+            X = X.loc[:, (X != 0).any(axis=0)].fillna(0)
+            y = (df["label"] == "responder").astype(int)
+            clf = RandomForestClassifier(n_estimators=100, random_state=42)
+            scores = cross_val_score(clf, X, y, cv=LeaveOneOut(), scoring="accuracy")
+            clf.fit(X, y)
+            return {
+                "accuracy": float(scores.mean()),
+                "accuracy_std": float(scores.std()),
+                "feature_importances": dict(zip(X.columns, clf.feature_importances_)),
+                "n_samples": len(y),
+            }
+
         # Filter to labeled samples only
         mask = feature_df["label"].isin(["responder", "non_responder"])
         labeled_df = feature_df[mask].copy()
