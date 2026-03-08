@@ -198,7 +198,7 @@ def run_real_analysis(dataset_id: str, download: bool = False):
         from sklearn.model_selection import LeaveOneOut, cross_val_score
 
         def _classify_response(df):
-            X = df.drop(columns=["sample_idx", "label"], errors="ignore")
+            X = df.drop(columns=["sample_id", "label"], errors="ignore")
             X = X.loc[:, (X != 0).any(axis=0)].fillna(0)
             y = (df["label"] == "responder").astype(int)
             clf = RandomForestClassifier(n_estimators=100, random_state=42)
