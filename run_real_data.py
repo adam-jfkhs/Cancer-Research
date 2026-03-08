@@ -109,39 +109,67 @@ def run_real_analysis(dataset_id: str, download: bool = False):
         print("  Continuing without exhaustion scores...")
 
     # ------------------------------------------------------------------
-    # 4. Per-patient TDA
+    # 4. Per-patient TDA (group by PATIENT, not by GSM sample)
     # ------------------------------------------------------------------
     print("\n[4/6] Computing persistent homology per patient...")
 
-    # Group cells by sample
+    # For GSE197268: group by patient_id (each patient has multiple timepoints)
+    # We use infusion product samples for TDA (the CAR-T cells before infusion)
     if "sample_id" not in adata.obs.columns:
         print("  Warning: No sample_id found. Treating all cells as one sample.")
         adata.obs["sample_id"] = "all_cells"
 
-    sample_ids = adata.obs["sample_id"].unique()
-    print(f"  Processing {len(sample_ids)} samples...")
+    # Build mapping: GSM → patient_id and timepoint from metadata
+    gsm_to_patient = {}
+    gsm_to_timepoint = {}
+    if "patient_id" in meta.columns:
+        for sid, row in meta.iterrows():
+            gsm_to_patient[sid] = row.get("patient_id", sid)
+            gsm_to_timepoint[sid] = row.get("timepoint", "unknown")
+
+    # Prefer infusion product samples (the CAR-T cells), then fall back to d7
+    # Group samples by patient
+    patient_samples = {}
+    for sid in adata.obs["sample_id"].unique():
+        patient = gsm_to_patient.get(sid, sid)
+        tp = gsm_to_timepoint.get(sid, "unknown")
+        if patient not in patient_samples:
+            patient_samples[patient] = []
+        patient_samples[patient].append((sid, tp))
+
+    print(f"  Found {len(patient_samples)} patients with data")
+
+    # For each patient, pick the best sample (prefer infusion > d7 > baseline)
+    TIMEPOINT_PRIORITY = {"infusion": 0, "d7_cart": 1, "d7": 2, "baseline": 3, "d14": 4, "retreatment": 5, "unknown": 6}
 
     point_clouds = []
     labels = []
     sample_names = []
+    patient_ids = []
 
-    for sid in sample_ids:
-        mask = adata.obs["sample_id"] == sid
+    for patient, samples in sorted(patient_samples.items()):
+        # Sort by priority: infusion first
+        samples.sort(key=lambda x: TIMEPOINT_PRIORITY.get(x[1], 99))
+        best_gsm, best_tp = samples[0]
+
+        mask = adata.obs["sample_id"] == best_gsm
         adata_sub = adata[mask]
 
         if adata_sub.shape[0] < 50:
-            print(f"  Skipping {sid}: only {adata_sub.shape[0]} cells")
+            print(f"  Skipping {patient} ({best_tp}): only {adata_sub.shape[0]} cells")
             continue
 
         # Extract point cloud from PCA
         pc = adata_sub.obsm["X_pca"][:, :20]
         point_clouds.append(pc)
 
-        # Assign label
-        label = response_labels.get(sid, "unknown")
+        # Get response label for this patient
+        from src.data.geo_download import GSE197268_PATIENT_RESPONSE
+        label = GSE197268_PATIENT_RESPONSE.get(patient, response_labels.get(best_gsm, "unknown"))
         labels.append(label)
-        sample_names.append(sid)
-        print(f"  {sid}: {adata_sub.shape[0]} cells → {label}")
+        sample_names.append(best_gsm)
+        patient_ids.append(patient)
+        print(f"  {patient} ({best_tp}, {best_gsm}): {adata_sub.shape[0]} cells → {label}")
 
     # ------------------------------------------------------------------
     # 5. Topological feature extraction + classification
@@ -152,6 +180,7 @@ def run_real_analysis(dataset_id: str, download: bool = False):
         point_clouds, labels=labels, maxdim=1
     )
     feature_df["sample_id"] = sample_names
+    feature_df["patient_id"] = patient_ids
 
     # Save features
     output_dir = _project_root / "data" / "results" / dataset_id

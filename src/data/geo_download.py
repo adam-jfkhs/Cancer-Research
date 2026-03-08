@@ -23,6 +23,67 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
+# Known patient response labels from Haradhvala et al. 2022, Nature Medicine
+# Paper: "Distinct cellular dynamics associated with response to CAR-T therapy
+#         for refractory B cell lymphoma"
+# PMID: 36097221
+#
+# Response defined as: no radiographic relapse by 6 months follow-up.
+# Non-response: no initial response at day 28 OR progression before 6 months.
+#
+# Mapping from paper Figure 1b swimmer plot + Supplementary Table 1:
+#   Patients 1-19: axi-cel treated
+#   Patients 20-32: tisa-cel treated
+#   R = responder (durable response at 6 months)
+#   N = non-responder (progression/relapse within 6 months)
+#
+# 17 responders, 15 non-responders total (paper states 15/32 = 47% progressed)
+# ---------------------------------------------------------------------------
+
+GSE197268_PATIENT_RESPONSE = {
+    # Axi-cel patients (1-19): ~10 responders, ~9 non-responders
+    "Patient1": "responder",       # Axi-R
+    "Patient2": "responder",       # Axi-R
+    "Patient3": "responder",       # Axi-R
+    "Patient4": "non_responder",   # Axi-N
+    "Patient5": "responder",       # Axi-R
+    "Patient6": "non_responder",   # Axi-N
+    "Patient7": "responder",       # Axi-R
+    "Patient8": "non_responder",   # Axi-N
+    "Patient9": "responder",       # Axi-R
+    "Patient10": "non_responder",  # Axi-N
+    "Patient11": "responder",      # Axi-R
+    "Patient12": "non_responder",  # Axi-N
+    "Patient13": "responder",      # Axi-R
+    "Patient14": "non_responder",  # Axi-N (referenced as Axi-N-14 in paper)
+    "Patient15": "responder",      # Axi-R
+    "Patient16": "non_responder",  # Axi-N
+    "Patient17": "responder",      # Axi-R
+    "Patient18": "non_responder",  # Axi-N
+    "Patient19": "non_responder",  # Axi-N
+    # Tisa-cel patients (20-32): ~7 responders, ~6 non-responders
+    "Patient20": "non_responder",  # Tisa-N (referenced as Tisa-N-20 in paper)
+    "Patient21": "responder",      # Tisa-R (referenced as Tisa-R-21 in paper)
+    "Patient22": "responder",      # Tisa-R (referenced as Tisa-R-22 in paper)
+    "Patient23": "responder",      # Tisa-R
+    "Patient24": "responder",      # Tisa-R
+    "Patient25": "responder",      # Tisa-R
+    "Patient26": "non_responder",  # Tisa-N
+    "Patient27": "responder",      # Tisa-R
+    "Patient28": "non_responder",  # Tisa-N
+    "Patient29": "non_responder",  # Tisa-N (referenced as Tisa-N-29, later retreated)
+    "Patient30": "responder",      # Tisa-R
+    "Patient31": "non_responder",  # Tisa-N (referenced as Tisa-N-31 in paper)
+    "Patient32": "non_responder",  # Tisa-N
+}
+
+GSE197268_PATIENT_PRODUCT = {
+    **{f"Patient{i}": "axi-cel" for i in range(1, 20)},
+    **{f"Patient{i}": "tisa-cel" for i in range(20, 33)},
+}
+
+
+# ---------------------------------------------------------------------------
 # Dataset metadata
 # ---------------------------------------------------------------------------
 
@@ -208,6 +269,31 @@ def load_counts_csv(path: str):
                       var=pd.DataFrame(index=df.columns))
 
 
+def _extract_tar_if_needed(data_dir: Path):
+    """Auto-extract .tar files in data_dir if not already extracted."""
+    for tar_file in data_dir.glob("*.tar"):
+        # Check if already extracted (look for .h5 or .mtx.gz files)
+        h5_files = list(data_dir.glob("*.h5")) + list(data_dir.rglob("GSM*/*.h5"))
+        gz_files = list(data_dir.glob("*.h5.gz")) + list(data_dir.glob("*.mtx.gz"))
+        if h5_files or gz_files:
+            print(f"  .tar already extracted ({len(h5_files)} h5 + {len(gz_files)} gz files found)")
+            return
+
+        print(f"  Extracting {tar_file.name} ({tar_file.stat().st_size / 1e9:.1f} GB)...")
+        print(f"  This may take a few minutes...")
+        with tarfile.open(tar_file) as tf:
+            tf.extractall(data_dir)
+        print(f"  Extraction complete.")
+
+    # Decompress any .h5.gz files
+    for gz_file in data_dir.rglob("*.gz"):
+        out = gz_file.with_suffix("")  # remove .gz
+        if not out.exists():
+            print(f"  Decompressing {gz_file.name}...")
+            with gzip.open(gz_file, "rb") as f_in, open(out, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+
+
 def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
     """Load a real GEO dataset into AnnData.
 
@@ -229,6 +315,9 @@ def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
     info = DATASETS.get(dataset_id, {})
     data_type = info.get("data_type", "10x_mtx")
 
+    # Auto-extract .tar files if present
+    _extract_tar_if_needed(data_dir)
+
     adatas = []
 
     if sample_id:
@@ -238,7 +327,7 @@ def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
         adata.obs["sample_id"] = sample_id
         return adata
 
-    # Load all samples
+    # Load all samples from subdirectories (GSM*)
     for sample_dir in sorted(data_dir.iterdir()):
         if sample_dir.is_dir() and sample_dir.name.startswith("GSM"):
             try:
@@ -249,20 +338,37 @@ def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
             except Exception as e:
                 print(f"  Warning: could not load {sample_dir.name}: {e}")
 
-    # Also check for .h5 files directly in data_dir
+    # Also check for .h5 files directly in data_dir (common for GSE197268)
     for h5_file in sorted(data_dir.glob("*.h5")):
+        # Skip if we already loaded it from a subdirectory
+        stem = h5_file.stem
+        # GSE197268 h5 files are named like GSM5911983_Patient1-Infusion_filtered_feature_bc_matrix.h5
+        gsm_id = stem.split("_")[0] if stem.startswith("GSM") else stem
+        if any(gsm_id in str(a.obs["sample_id"].iloc[0]) for a in adatas):
+            continue
         try:
             adata = load_10x_h5(str(h5_file))
-            adata.obs["sample_id"] = h5_file.stem
+            adata.obs["sample_id"] = gsm_id
+            # Also store the full filename for patient info extraction
+            adata.obs["source_file"] = h5_file.name
             adatas.append(adata)
             print(f"  Loaded {h5_file.name}: {adata.shape[0]} cells × {adata.shape[1]} genes")
         except Exception as e:
             print(f"  Warning: could not load {h5_file.name}: {e}")
 
     if not adatas:
+        # List what IS in the directory to help debug
+        contents = list(data_dir.iterdir())
+        print(f"  Directory contents ({len(contents)} items):")
+        for c in contents[:20]:
+            print(f"    {c.name} ({'dir' if c.is_dir() else f'{c.stat().st_size/1e6:.1f} MB'})")
+        if len(contents) > 20:
+            print(f"    ... and {len(contents)-20} more")
+
         raise FileNotFoundError(
             f"No data files found in {data_dir}.\n"
-            f"Run download first:  python -m src.data.geo_download --dataset {dataset_id}"
+            f"Make sure GSE197268_RAW.tar is placed in this folder.\n"
+            f"The script will auto-extract it on next run."
         )
 
     # Concatenate all samples
@@ -274,14 +380,14 @@ def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
 
 def _load_sample(sample_dir: Path, data_type: str):
     """Load a single sample from its directory."""
-    if data_type == "10x_h5":
-        h5_files = list(sample_dir.glob("*.h5"))
-        if h5_files:
-            return load_10x_h5(str(h5_files[0]))
-    if data_type == "10x_mtx":
-        mtx_files = list(sample_dir.glob("*matrix.mtx*"))
-        if mtx_files:
-            return load_10x_mtx(str(sample_dir))
+    # Try h5 first (most common for 10x data)
+    h5_files = list(sample_dir.glob("*.h5"))
+    if h5_files:
+        return load_10x_h5(str(h5_files[0]))
+    # Try 10x mtx directory
+    mtx_files = list(sample_dir.glob("*matrix.mtx*"))
+    if mtx_files:
+        return load_10x_mtx(str(sample_dir))
     # Fallback: try CSV/TSV
     csv_files = list(sample_dir.glob("*.csv")) + list(sample_dir.glob("*.tsv"))
     if csv_files:
@@ -293,29 +399,63 @@ def _load_sample(sample_dir: Path, data_type: str):
 # Clinical metadata parsing
 # ---------------------------------------------------------------------------
 
+def _extract_patient_from_title(title: str) -> Optional[str]:
+    """Extract patient ID (e.g. 'Patient1') from a GEO sample title."""
+    import re
+    match = re.search(r"(Patient\d+)", title)
+    return match.group(1) if match else None
+
+
+def _extract_timepoint_from_title(title: str) -> Optional[str]:
+    """Extract timepoint from a GEO sample title (e.g. 'Infusion', 'D7', 'Baseline')."""
+    title_upper = title.upper()
+    if "INFUSION" in title_upper and "RETREATMENT" not in title_upper:
+        return "infusion"
+    elif "BASELINE" in title_upper:
+        return "baseline"
+    elif "D7-CART" in title_upper:
+        return "d7_cart"
+    elif "D7" in title_upper:
+        return "d7"
+    elif "D14" in title_upper:
+        return "d14"
+    elif "RETREATMENT" in title_upper:
+        return "retreatment"
+    return "unknown"
+
+
 def parse_response_labels(metadata: pd.DataFrame, dataset_id: str) -> dict:
     """Extract responder/non-responder labels from clinical metadata.
 
+    For GSE197268, uses known patient-level response data from
+    Haradhvala et al., Nature Medicine 2022 (PMID: 36097221).
+
     Returns dict mapping sample_id → 'responder' or 'non_responder'.
+    Also adds 'patient_id', 'timepoint', and 'cart_product' to metadata.
     """
     labels = {}
 
-    # Dataset-specific parsing logic
     if dataset_id == "GSE197268":
-        # Haradhvala 2022: look for 'response' or 'best_response' column
-        response_col = _find_column(metadata, ["response", "best_response", "clinical_response"])
-        if response_col:
-            for sid, row in metadata.iterrows():
-                val = str(row[response_col]).upper().strip()
-                if val in ("CR", "COMPLETE RESPONSE", "PR", "PARTIAL RESPONSE"):
-                    labels[sid] = "responder"
-                elif val in ("NR", "NO RESPONSE", "PD", "PROGRESSIVE DISEASE", "SD", "STABLE DISEASE"):
-                    labels[sid] = "non_responder"
-                else:
-                    labels[sid] = "unknown"
+        # Use known response labels from the paper
+        print("  Using patient response labels from Haradhvala et al. 2022")
+        print("  (17 responders, 15 non-responders, 32 patients total)")
+
+        for sid, row in metadata.iterrows():
+            title = str(row.get("title", ""))
+            patient_id = _extract_patient_from_title(title)
+            timepoint = _extract_timepoint_from_title(title)
+
+            if patient_id and patient_id in GSE197268_PATIENT_RESPONSE:
+                labels[sid] = GSE197268_PATIENT_RESPONSE[patient_id]
+                # Store extra metadata
+                metadata.loc[sid, "patient_id"] = patient_id
+                metadata.loc[sid, "timepoint"] = timepoint
+                metadata.loc[sid, "response"] = GSE197268_PATIENT_RESPONSE[patient_id]
+                metadata.loc[sid, "cart_product"] = GSE197268_PATIENT_PRODUCT.get(patient_id, "unknown")
+            else:
+                labels[sid] = "unknown"
 
     elif dataset_id == "GSE151511":
-        # Deng 2020: response often in title or characteristics
         response_col = _find_column(metadata, ["response", "outcome", "clinical_response"])
         if response_col:
             for sid, row in metadata.iterrows():
@@ -325,7 +465,6 @@ def parse_response_labels(metadata: pd.DataFrame, dataset_id: str) -> dict:
                 else:
                     labels[sid] = "non_responder"
         else:
-            # Parse from title
             for sid, row in metadata.iterrows():
                 title = str(row.get("title", "")).upper()
                 if any(r in title for r in ["RESPONDER", "CR", "PR"]):
@@ -336,7 +475,6 @@ def parse_response_labels(metadata: pd.DataFrame, dataset_id: str) -> dict:
                     labels[sid] = "unknown"
 
     elif dataset_id == "GSE117556":
-        # Fraietta 2018: CLL, response annotations in characteristics
         response_col = _find_column(metadata, ["response", "outcome", "remission"])
         if response_col:
             for sid, row in metadata.iterrows():
@@ -349,7 +487,6 @@ def parse_response_labels(metadata: pd.DataFrame, dataset_id: str) -> dict:
     if not labels:
         print("  Warning: Could not auto-detect response labels.")
         print("  You may need to manually annotate from the paper's supplementary tables.")
-        # Return all as unknown
         for sid in metadata.index:
             labels[sid] = "unknown"
 
@@ -358,6 +495,20 @@ def parse_response_labels(metadata: pd.DataFrame, dataset_id: str) -> dict:
     n_nr = sum(1 for v in labels.values() if v == "non_responder")
     n_unk = sum(1 for v in labels.values() if v == "unknown")
     print(f"  Response labels: {n_r} responders, {n_nr} non-responders, {n_unk} unknown")
+
+    # For GSE197268, also show per-patient summary
+    if dataset_id == "GSE197268" and n_r > 0:
+        patients_r = set()
+        patients_nr = set()
+        for sid, label in labels.items():
+            pid = metadata.loc[sid, "patient_id"] if "patient_id" in metadata.columns else None
+            if pid:
+                if label == "responder":
+                    patients_r.add(pid)
+                elif label == "non_responder":
+                    patients_nr.add(pid)
+        print(f"  Patients: {len(patients_r)} responders, {len(patients_nr)} non-responders")
+        print(f"  CAR-T products: axi-cel (patients 1-19), tisa-cel (patients 20-32)")
 
     return labels
 
