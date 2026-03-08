@@ -46,6 +46,71 @@ from src.mapper.cart_mapper import (
 )
 
 
+def run_from_features(dataset_id: str):
+    """Resume from saved topological_features.csv — skips all heavy computation."""
+    features_path = _project_root / "data" / "results" / dataset_id / "topological_features.csv"
+    if not features_path.exists():
+        print(f"ERROR: No saved features at {features_path}")
+        print("Run without --resume first to generate features.")
+        sys.exit(1)
+
+    print("=" * 60)
+    print(f"TDA-CAR-T: Resume from features — {dataset_id}")
+    print("=" * 60)
+
+    feature_df = pd.read_csv(features_path)
+    print(f"  Loaded {len(feature_df)} samples from {features_path}")
+
+    # --- Classification ---
+    labels = feature_df["label"].tolist()
+    has_both = "responder" in labels and "non_responder" in labels
+
+    if has_both and sum(l != "unknown" for l in labels) >= 4:
+        print("\n  Running response classification...")
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.model_selection import LeaveOneOut, cross_val_score
+
+        mask = feature_df["label"].isin(["responder", "non_responder"])
+        labeled_df = feature_df[mask].copy()
+
+        if len(labeled_df) >= 4:
+            X = labeled_df.drop(columns=["sample_id", "patient_id", "label"], errors="ignore")
+            X = X.select_dtypes(include=[np.number])
+            X = X.loc[:, (X != 0).any(axis=0)].fillna(0)
+            y = (labeled_df["label"] == "responder").astype(int)
+
+            clf = RandomForestClassifier(n_estimators=100, random_state=42)
+            scores = cross_val_score(clf, X, y, cv=LeaveOneOut(), scoring="accuracy")
+            clf.fit(X, y)
+
+            print(f"  LOO Accuracy: {scores.mean():.2f} (+/- {scores.std():.2f})")
+            print(f"  Top features:")
+            for feat, imp in sorted(zip(X.columns, clf.feature_importances_), key=lambda x: -x[1])[:5]:
+                print(f"    {feat}: {imp:.3f}")
+    else:
+        print("\n  Skipping classification (need both responders and non-responders).")
+
+    # --- Topological comparison ---
+    if has_both:
+        r_mask = feature_df["label"] == "responder"
+        nr_mask = feature_df["label"] == "non_responder"
+
+        if r_mask.any() and nr_mask.any():
+            h1_cols = [c for c in feature_df.columns if "H1" in c]
+            print("\n  TOPOLOGICAL COMPARISON (Responder vs Non-Responder):")
+            print(f"  {'Feature':<30} {'Responder':>12} {'Non-Resp':>12} {'Diff':>8}")
+            print(f"  {'-'*62}")
+            for col in h1_cols:
+                r_val = feature_df.loc[r_mask, col].mean()
+                nr_val = feature_df.loc[nr_mask, col].mean()
+                diff = r_val - nr_val
+                print(f"  {col:<30} {r_val:>12.3f} {nr_val:>12.3f} {diff:>+8.3f}")
+
+    print("\n" + "=" * 60)
+    print("DONE (resumed from saved features)")
+    print("=" * 60)
+
+
 def run_real_analysis(dataset_id: str, download: bool = False):
     """Full pipeline: download → preprocess → TDA → classify → visualize.
 
@@ -198,7 +263,8 @@ def run_real_analysis(dataset_id: str, download: bool = False):
         from sklearn.model_selection import LeaveOneOut, cross_val_score
 
         def _classify_response(df):
-            X = df.drop(columns=["sample_id", "label"], errors="ignore")
+            X = df.drop(columns=["sample_id", "patient_id", "label"], errors="ignore")
+            X = X.select_dtypes(include=[np.number])
             X = X.loc[:, (X != 0).any(axis=0)].fillna(0)
             y = (df["label"] == "responder").astype(int)
             clf = RandomForestClassifier(n_estimators=100, random_state=42)
@@ -304,11 +370,15 @@ if __name__ == "__main__":
                         help="GEO accession (default: GSE197268)")
     parser.add_argument("--download", action="store_true",
                         help="Download data before analysis")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from saved features (skip data loading + TDA)")
     parser.add_argument("--info", action="store_true",
                         help="Print instructions for getting data")
     args = parser.parse_args()
 
     if args.info:
         print_instructions()
+    elif args.resume:
+        run_from_features(args.dataset)
     else:
         run_real_analysis(args.dataset, download=args.download)
