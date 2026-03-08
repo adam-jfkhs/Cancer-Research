@@ -367,11 +367,11 @@ def _extract_tar_if_needed(data_dir: Path):
     Handles the nested GEO archive structure:
       GSE197268_RAW.tar → GSM*.tar.gz → GSM*.tar → (h5/mtx files inside)
     """
-    # Check if already fully extracted (h5 files exist in subdirectories)
-    h5_in_subdirs = list(data_dir.rglob("GSM*/*.h5"))
-    mtx_in_subdirs = list(data_dir.rglob("GSM*/matrix.mtx*"))
+    # Check if already fully extracted (h5/mtx files exist in subdirectories)
+    h5_in_subdirs = list(data_dir.rglob("GSM*/**/*.h5")) + list(data_dir.rglob("GSM*/*.h5"))
+    mtx_in_subdirs = list(data_dir.rglob("GSM*/**/matrix.mtx*")) + list(data_dir.rglob("GSM*/matrix.mtx*"))
     if h5_in_subdirs or mtx_in_subdirs:
-        print(f"  Data already extracted ({len(h5_in_subdirs)} h5 files found)")
+        print(f"  Data already extracted ({len(h5_in_subdirs)} h5, {len(mtx_in_subdirs)} mtx files found)")
         return
 
     # Step 1: Extract the main _RAW.tar if present
@@ -425,9 +425,14 @@ def _extract_tar_if_needed(data_dir: Path):
             with gzip.open(gz_file, "rb") as f_in, open(out, "wb") as f_out:
                 shutil.copyfileobj(f_in, f_out)
 
-    # Verify extraction
-    h5_count = len(list(data_dir.rglob("GSM*/*.h5")))
-    mtx_count = len(list(data_dir.rglob("GSM*/matrix.mtx*")))
+    # Verify extraction (search recursively in GSM* dirs)
+    h5_count = len(list(data_dir.rglob("GSM*/**/*.h5")) + list(data_dir.rglob("GSM*/*.h5")))
+    mtx_count = len(list(data_dir.rglob("GSM*/**/matrix.mtx*")) + list(data_dir.rglob("GSM*/matrix.mtx*")))
+    # Show contents of first sample dir for debugging
+    first_gsm = next((d for d in sorted(data_dir.iterdir()) if d.is_dir() and d.name.startswith("GSM")), None)
+    if first_gsm:
+        sample_files = list(first_gsm.rglob("*"))
+        print(f"  Sample dir '{first_gsm.name}' contains: {[str(f.relative_to(first_gsm)) for f in sample_files[:15]]}")
     print(f"  Extraction complete: {h5_count} h5 files, {mtx_count} mtx files")
 
 
@@ -516,20 +521,36 @@ def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
 
 
 def _load_sample(sample_dir: Path, data_type: str):
-    """Load a single sample from its directory."""
-    # Try h5 first (most common for 10x data)
-    h5_files = list(sample_dir.glob("*.h5"))
+    """Load a single sample from its directory.
+
+    Handles nested subdirectories created by tar extraction, e.g.:
+      GSM5911983/Patient1-Infusion/barcodes.tsv.gz
+      GSM5911983/filtered_feature_bc_matrix/matrix.mtx.gz
+    """
+    # Try h5 first (most common for 10x data) — search recursively
+    h5_files = list(sample_dir.rglob("*.h5"))
     if h5_files:
         return load_10x_h5(str(h5_files[0]))
-    # Try 10x mtx directory
-    mtx_files = list(sample_dir.glob("*matrix.mtx*"))
+
+    # Try 10x mtx directory — search recursively for matrix.mtx*
+    mtx_files = list(sample_dir.rglob("*matrix.mtx*"))
     if mtx_files:
-        return load_10x_mtx(str(sample_dir))
-    # Fallback: try CSV/TSV
-    csv_files = list(sample_dir.glob("*.csv")) + list(sample_dir.glob("*.tsv"))
+        # The mtx file's parent directory is what scanpy needs
+        mtx_dir = mtx_files[0].parent
+        return load_10x_mtx(str(mtx_dir))
+
+    # Fallback: try CSV/TSV recursively
+    csv_files = list(sample_dir.rglob("*.csv")) + list(sample_dir.rglob("*.tsv"))
     if csv_files:
         return load_counts_csv(str(csv_files[0]))
-    raise FileNotFoundError(f"No recognized data files in {sample_dir}")
+
+    # Debug: show what's actually in the directory
+    all_files = list(sample_dir.rglob("*"))
+    file_list = [str(f.relative_to(sample_dir)) for f in all_files[:10]]
+    raise FileNotFoundError(
+        f"No recognized data files in {sample_dir}\n"
+        f"  Contents ({len(all_files)} items): {file_list}"
+    )
 
 
 # ---------------------------------------------------------------------------
