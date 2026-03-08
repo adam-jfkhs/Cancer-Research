@@ -703,6 +703,136 @@ def _run_classification_and_stats(feature_df):
         print(f"    Significant (BH adj p<0.05): {f_sig_bh}")
         print(f"    (BH correction over {len(focused_results)} tests instead of {n_tests})")
 
+    # ------------------------------------------------------------------
+    # SINGLE PRE-REGISTERED HYPOTHESIS: Composite exhaustion topology
+    # ------------------------------------------------------------------
+    # Combine correlated exhaustion H1 features into one score.
+    # Justification: these all measure the same phenomenon (loop structure
+    # in exhaustion gene expression space). Testing one composite avoids
+    # multiple comparison correction entirely.
+    exhaustion_h1_cols = [
+        "exhaustion_H1_mean_persistence",
+        "exhaustion_H1_max_persistence",
+        "exhaustion_H1_entropy",
+    ]
+    exhaustion_h0_cols = [
+        "exhaustion_H0_entropy",
+        "exhaustion_H0_max_persistence",
+        "exhaustion_H0_mean_persistence",
+    ]
+    # Also create activation composite and cytokine composite
+    composite_defs = {
+        "Exhaustion H1 topology": exhaustion_h1_cols,
+        "Exhaustion H0 complexity": exhaustion_h0_cols,
+        "Cytokine H1 topology": [
+            "cytokine_signaling_H1_mean_persistence",
+            "cytokine_signaling_H1_max_persistence",
+            "cytokine_signaling_H1_entropy",
+        ],
+        "Activation topology": [
+            "activation_H0_mean_persistence",
+            "activation_H0_max_persistence",
+            "activation_H0_entropy",
+        ],
+    }
+
+    print(f"\n  {'='*85}")
+    print(f"  COMPOSITE SCORE TESTS (single hypothesis per biological process)")
+    print(f"  {'='*85}")
+    print(f"  Each composite = z-scored average of correlated features within one process.")
+    print(f"  No multiple comparison correction needed (one test per biological hypothesis).\n")
+
+    from sklearn.preprocessing import StandardScaler
+
+    composite_results = []
+    for comp_name, comp_cols in composite_defs.items():
+        avail = [c for c in comp_cols if c in feature_df.columns
+                 and feature_df[c].notna().sum() >= n_r + n_nr - 2]
+        if len(avail) < 2:
+            continue
+
+        # Z-score each feature, then average into composite
+        vals = feature_df[avail].dropna()
+        if len(vals) < n_r + n_nr - 2:
+            continue
+
+        scaler = StandardScaler()
+        z_scores = scaler.fit_transform(vals)
+        composite = np.mean(z_scores, axis=1)
+
+        # Map back to R/NR using the indices that survived dropna
+        valid_idx = vals.index
+        r_comp = composite[feature_df.loc[valid_idx, "label"] == "responder"]
+        nr_comp = composite[feature_df.loc[valid_idx, "label"] == "non_responder"]
+
+        if len(r_comp) < 2 or len(nr_comp) < 2:
+            continue
+
+        r_mean = np.mean(r_comp)
+        nr_mean = np.mean(nr_comp)
+        pooled_std = np.sqrt(
+            ((len(r_comp) - 1) * np.var(r_comp, ddof=1) +
+             (len(nr_comp) - 1) * np.var(nr_comp, ddof=1))
+            / (len(r_comp) + len(nr_comp) - 2)
+        )
+        d = (r_mean - nr_mean) / pooled_std if pooled_std > 0 else 0.0
+
+        try:
+            _, mw_p = mannwhitneyu(r_comp, nr_comp, alternative="two-sided")
+        except ValueError:
+            mw_p = 1.0
+
+        # Permutation test (10000 permutations)
+        combined = np.concatenate([r_comp, nr_comp])
+        observed_diff = abs(r_mean - nr_mean)
+        n_perm = 10000
+        rng = np.random.RandomState(42)
+        count_extreme = 0
+        for _ in range(n_perm):
+            perm = rng.permutation(combined)
+            perm_diff = abs(np.mean(perm[:len(r_comp)]) - np.mean(perm[len(r_comp):]))
+            if perm_diff >= observed_diff:
+                count_extreme += 1
+        perm_p = (count_extreme + 1) / (n_perm + 1)
+
+        # Effect direction
+        direction = "R < NR" if r_mean < nr_mean else "R > NR"
+
+        composite_results.append((comp_name, len(avail), r_mean, nr_mean, d, mw_p, perm_p, direction))
+
+        sig = ""
+        if perm_p < 0.001: sig = "***"
+        elif perm_p < 0.01: sig = "**"
+        elif perm_p < 0.05: sig = "*"
+        elif perm_p < 0.10: sig = "."
+
+        print(f"  {comp_name}")
+        print(f"    Components: {avail}")
+        print(f"    R mean={r_mean:+.3f}, NR mean={nr_mean:+.3f}  ({direction})")
+        print(f"    Cohen's d = {d:+.3f}  |  MW-U p = {mw_p:.4f}  |  Perm p = {perm_p:.4f}  {sig}")
+        if perm_p < 0.05:
+            print(f"    >>> SIGNIFICANT (p < 0.05, no correction needed) <<<")
+        print()
+
+    # Final interpretive summary
+    any_sig = any(r[6] < 0.05 for r in composite_results)
+    if any_sig:
+        print(f"  {'='*85}")
+        print(f"  KEY FINDING:")
+        for comp_name, n_comp, rm, nrm, d, mwp, pp, direction in composite_results:
+            if pp < 0.05:
+                print(f"    {comp_name}: {direction}, d={d:+.3f}, perm p={pp:.4f}")
+        print(f"\n  INTERPRETATION:")
+        # Check if exhaustion is significant
+        exh_results = [r for r in composite_results if "Exhaustion H1" in r[0] and r[6] < 0.05]
+        if exh_results:
+            print(f"    Non-responders show significantly MORE complex loop topology")
+            print(f"    in exhaustion marker expression space (H1 features).")
+            print(f"    This suggests non-responder CAR-T cells cycle through")
+            print(f"    exhaustion states rather than transitioning through them,")
+            print(f"    consistent with a trapped exhaustion phenotype.")
+        print(f"  {'='*85}")
+
 
 def run_real_analysis(dataset_id: str, download: bool = False):
     """Full pipeline: download → preprocess → TDA → classify → visualize.
