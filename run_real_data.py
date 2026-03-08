@@ -593,6 +593,116 @@ def _run_classification_and_stats(feature_df):
         sig = "*" if best_p < 0.05 else ("." if best_p < 0.10 else "")
         print(f"    {gs:<30} best p={best_p:.4f} (BH={best_bh:.4f}) d={best_d:+.3f} [{best_col}] {sig}")
 
+    # ------------------------------------------------------------------
+    # FOCUSED HYPOTHESIS TESTS (pre-registered, fewer comparisons)
+    # ------------------------------------------------------------------
+    # These are the biologically motivated hypotheses — test only these
+    # to reduce multiple comparison burden (BH over ~15 tests, not 158)
+    hypothesis_features = [
+        # Exhaustion topology — primary hypothesis
+        "exhaustion_H1_mean_persistence",
+        "exhaustion_H1_max_persistence",
+        "exhaustion_H1_count",
+        "exhaustion_H0_entropy",
+        # Activation / effector — secondary hypothesis
+        "activation_H0_mean_persistence",
+        "activation_H1_mean_persistence",
+        "effector_H1_count",
+        # Memory/stemness — tertiary hypothesis
+        "memory_stemness_H1_max_persistence",
+        "memory_stemness_H0_entropy",
+        # Cytokine signaling
+        "cytokine_signaling_H1_mean_persistence",
+        # Metabolic
+        "metab_glycolysis_H1_total_persistence",
+        "metab_oxidative_phosphorylation_H0_count",
+        # Global landscape
+        "H1_L0_max",
+        "H1_L1_max",
+        "H1_L2_max",
+    ]
+
+    # Filter to features that actually exist
+    hypothesis_features = [f for f in hypothesis_features if f in feature_df.columns]
+
+    if hypothesis_features:
+        print(f"\n  {'='*85}")
+        print(f"  FOCUSED HYPOTHESIS TESTS ({len(hypothesis_features)} pre-selected features)")
+        print(f"  {'='*85}")
+
+        focused_results = []
+        for col in hypothesis_features:
+            r_vals = feature_df.loc[r_mask, col].dropna().values.astype(float)
+            nr_vals = feature_df.loc[nr_mask, col].dropna().values.astype(float)
+            if len(r_vals) < 2 or len(nr_vals) < 2:
+                continue
+
+            r_mean = np.mean(r_vals)
+            nr_mean = np.mean(nr_vals)
+            pooled_std = np.sqrt(
+                ((len(r_vals) - 1) * np.var(r_vals, ddof=1) +
+                 (len(nr_vals) - 1) * np.var(nr_vals, ddof=1))
+                / (len(r_vals) + len(nr_vals) - 2)
+            )
+            d = (r_mean - nr_mean) / pooled_std if pooled_std > 0 else 0.0
+            try:
+                _, mw_p = mannwhitneyu(r_vals, nr_vals, alternative="two-sided")
+            except ValueError:
+                mw_p = 1.0
+
+            # Permutation test (10000 permutations)
+            combined = np.concatenate([r_vals, nr_vals])
+            observed_diff = abs(r_mean - nr_mean)
+            n_perm = 10000
+            rng = np.random.RandomState(42)
+            count_extreme = 0
+            for _ in range(n_perm):
+                perm = rng.permutation(combined)
+                perm_diff = abs(np.mean(perm[:len(r_vals)]) - np.mean(perm[len(r_vals):]))
+                if perm_diff >= observed_diff:
+                    count_extreme += 1
+            perm_p = (count_extreme + 1) / (n_perm + 1)
+
+            focused_results.append((col, r_mean, nr_mean, d, mw_p, perm_p))
+
+        # BH correction on focused set only
+        fp_vals = np.array([r[4] for r in focused_results])
+        fn = len(fp_vals)
+        f_sorted = np.argsort(fp_vals)
+        f_bh = np.zeros(fn)
+        for rank, idx in enumerate(f_sorted, 1):
+            f_bh[idx] = fp_vals[idx] * fn / rank
+        for i in range(fn - 2, -1, -1):
+            f_bh[f_sorted[i]] = min(f_bh[f_sorted[i]],
+                                     f_bh[f_sorted[i + 1]] if i + 1 < fn else 1.0)
+        f_bh = np.clip(f_bh, 0, 1)
+
+        print(f"  {'Feature':<42} {'R':>7} {'NR':>7} {'d':>7} {'MW p':>8} {'perm p':>8} {'BH p':>8} {'Sig':>5}")
+        print(f"  {'-'*92}")
+
+        # Sort by MW p
+        order = sorted(range(len(focused_results)), key=lambda i: focused_results[i][4])
+        for i in order:
+            col, rm, nrm, d, mwp, pp = focused_results[i]
+            adj_p = f_bh[i]
+            sig = ""
+            if adj_p < 0.001: sig = "***"
+            elif adj_p < 0.01: sig = "**"
+            elif adj_p < 0.05: sig = "*"
+            elif adj_p < 0.10: sig = "."
+            elif mwp < 0.05: sig = "(r)"
+            print(f"  {col:<42} {rm:>7.3f} {nrm:>7.3f} {d:>+7.3f} {mwp:>8.4f} {pp:>8.4f} {adj_p:>8.4f} {sig:>5}")
+
+        f_sig_raw = sum(1 for r in focused_results if r[4] < 0.05)
+        f_sig_bh = sum(1 for p in f_bh if p < 0.05)
+        f_trend = sum(1 for r in focused_results if r[4] < 0.10)
+
+        print(f"\n  FOCUSED SUMMARY ({len(focused_results)} hypothesis-driven tests):")
+        print(f"    Significant (raw p<0.05): {f_sig_raw}")
+        print(f"    Trending (raw p<0.10): {f_trend}")
+        print(f"    Significant (BH adj p<0.05): {f_sig_bh}")
+        print(f"    (BH correction over {len(focused_results)} tests instead of {n_tests})")
+
 
 def run_real_analysis(dataset_id: str, download: bool = False):
     """Full pipeline: download → preprocess → TDA → classify → visualize.
