@@ -184,6 +184,39 @@ def test_gse151511_patient_labels():
     assert GSE151511_GSM_TO_PATIENT["GSM4579914"] == "ac24"
 
 
+def test_custom_mtx_loader():
+    """Test that _load_custom_mtx handles non-standard 10x naming (e.g. ac01_matrix.mtx)."""
+    pytest.importorskip("anndata")
+    import tempfile
+    from pathlib import Path
+    from scipy.io import mmwrite
+    from scipy.sparse import random as sparse_random
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+
+        # Create fake 10x files with GSE151511-style naming
+        mat = sparse_random(100, 50, density=0.1, format="csc", random_state=42)
+        mmwrite(str(tmpdir / "ac01_matrix.mtx"), mat.T)  # genes×cells for 10x format
+
+        # genes file (gene_id \t gene_name)
+        with open(tmpdir / "ac01_genes.tsv", "w") as f:
+            for i in range(50):
+                f.write(f"ENSG{i:05d}\tGENE{i}\n")
+
+        # barcodes file
+        with open(tmpdir / "ac01_barcodes.tsv", "w") as f:
+            for i in range(100):
+                f.write(f"AAAA-{i}\n")
+
+        from src.data.geo_download import _load_custom_mtx
+        adata = _load_custom_mtx(tmpdir / "ac01_matrix.mtx")
+
+        assert adata.shape[0] == 100  # cells
+        assert adata.shape[1] == 50   # genes
+        assert "gene_ids" in adata.var.columns
+
+
 def test_gse151511_fallback_metadata():
     """Test that fallback metadata builder works for GSE151511."""
     from src.data.geo_download import _build_fallback_metadata

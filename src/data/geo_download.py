@@ -476,7 +476,11 @@ def _extract_tar_if_needed(data_dir: Path):
     """
     # Check if already fully extracted (h5/mtx files exist in subdirectories)
     h5_in_subdirs = list(data_dir.rglob("GSM*/**/*.h5")) + list(data_dir.rglob("GSM*/*.h5"))
-    mtx_in_subdirs = list(data_dir.rglob("GSM*/**/matrix.mtx*")) + list(data_dir.rglob("GSM*/matrix.mtx*"))
+    # Match both standard (matrix.mtx*) and non-standard (*_matrix.mtx) naming
+    mtx_in_subdirs = (list(data_dir.rglob("GSM*/**/matrix.mtx*"))
+                      + list(data_dir.rglob("GSM*/matrix.mtx*"))
+                      + list(data_dir.rglob("GSM*/**/*_matrix.mtx*"))
+                      + list(data_dir.rglob("GSM*/*_matrix.mtx*")))
     if h5_in_subdirs or mtx_in_subdirs:
         print(f"  Data already extracted ({len(h5_in_subdirs)} h5, {len(mtx_in_subdirs)} mtx files found)")
         return
@@ -534,7 +538,8 @@ def _extract_tar_if_needed(data_dir: Path):
 
     # Verify extraction (search recursively in GSM* dirs)
     h5_count = len(list(data_dir.rglob("GSM*/**/*.h5")) + list(data_dir.rglob("GSM*/*.h5")))
-    mtx_count = len(list(data_dir.rglob("GSM*/**/matrix.mtx*")) + list(data_dir.rglob("GSM*/matrix.mtx*")))
+    mtx_count = len(list(data_dir.rglob("GSM*/**/matrix.mtx*")) + list(data_dir.rglob("GSM*/matrix.mtx*"))
+                    + list(data_dir.rglob("GSM*/**/*_matrix.mtx*")) + list(data_dir.rglob("GSM*/*_matrix.mtx*")))
     # Show contents of first sample dir for debugging
     first_gsm = next((d for d in sorted(data_dir.iterdir()) if d.is_dir() and d.name.startswith("GSM")), None)
     if first_gsm:
@@ -616,7 +621,7 @@ def load_real_dataset(dataset_id: str, sample_id: Optional[str] = None):
 
         raise FileNotFoundError(
             f"No data files found in {data_dir}.\n"
-            f"Make sure GSE197268_RAW.tar is placed in this folder.\n"
+            f"Make sure the _RAW.tar file for {dataset_id} is placed in this folder.\n"
             f"The script will auto-extract it on next run."
         )
 
@@ -633,6 +638,7 @@ def _load_sample(sample_dir: Path, data_type: str):
     Handles nested subdirectories created by tar extraction, e.g.:
       GSM5911983/Patient1-Infusion/barcodes.tsv.gz
       GSM5911983/filtered_feature_bc_matrix/matrix.mtx.gz
+      GSM4579891/ac01/ac01_matrix.mtx  (GSE151511 non-standard naming)
     """
     # Try h5 first (most common for 10x data) — search recursively
     h5_files = list(sample_dir.rglob("*.h5"))
@@ -640,11 +646,18 @@ def _load_sample(sample_dir: Path, data_type: str):
         return load_10x_h5(str(h5_files[0]))
 
     # Try 10x mtx directory — search recursively for matrix.mtx*
-    mtx_files = list(sample_dir.rglob("*matrix.mtx*"))
+    # Standard naming: matrix.mtx.gz (or matrix.mtx)
+    mtx_files = list(sample_dir.rglob("matrix.mtx*"))
     if mtx_files:
         # The mtx file's parent directory is what scanpy needs
         mtx_dir = mtx_files[0].parent
         return load_10x_mtx(str(mtx_dir))
+
+    # Non-standard naming: *_matrix.mtx (e.g. ac01_matrix.mtx from GSE151511)
+    # Scanpy requires exact names, so we load manually with scipy
+    custom_mtx = list(sample_dir.rglob("*_matrix.mtx*")) + list(sample_dir.rglob("*_matrix.mtx"))
+    if custom_mtx:
+        return _load_custom_mtx(custom_mtx[0])
 
     # Fallback: try CSV/TSV recursively
     csv_files = list(sample_dir.rglob("*.csv")) + list(sample_dir.rglob("*.tsv"))
@@ -658,6 +671,71 @@ def _load_sample(sample_dir: Path, data_type: str):
         f"No recognized data files in {sample_dir}\n"
         f"  Contents ({len(all_files)} items): {file_list}"
     )
+
+
+def _load_custom_mtx(mtx_path: Path):
+    """Load a 10x-style matrix with non-standard file naming.
+
+    Handles files like ac01_matrix.mtx, ac01_genes.tsv, ac01_barcodes.tsv
+    where the standard scanpy.read_10x_mtx() won't work because it
+    expects exact filenames (matrix.mtx.gz, genes.tsv.gz, barcodes.tsv.gz).
+    """
+    import anndata as ad
+    from scipy.io import mmread
+
+    mtx_dir = mtx_path.parent
+    prefix = mtx_path.name.replace("_matrix.mtx", "")
+
+    # Find the genes/features file
+    genes_path = None
+    for pattern in [f"{prefix}_genes.tsv", f"{prefix}_features.tsv",
+                    f"{prefix}_genes.tsv.gz", f"{prefix}_features.tsv.gz",
+                    "genes.tsv", "features.tsv", "genes.tsv.gz", "features.tsv.gz"]:
+        candidate = mtx_dir / pattern
+        if candidate.exists():
+            genes_path = candidate
+            break
+
+    # Find the barcodes file
+    barcodes_path = None
+    for pattern in [f"{prefix}_barcodes.tsv", f"{prefix}_barcodes.tsv.gz",
+                    "barcodes.tsv", "barcodes.tsv.gz"]:
+        candidate = mtx_dir / pattern
+        if candidate.exists():
+            barcodes_path = candidate
+            break
+
+    if genes_path is None or barcodes_path is None:
+        raise FileNotFoundError(
+            f"Found matrix at {mtx_path} but missing genes/barcodes files.\n"
+            f"  Directory contents: {[f.name for f in mtx_dir.iterdir()]}"
+        )
+
+    # Read the matrix (cells × genes after transpose)
+    mat = mmread(str(mtx_path)).T.tocsc()
+
+    # Read genes
+    genes_df = pd.read_csv(genes_path, sep="\t", header=None)
+    if genes_df.shape[1] >= 2:
+        gene_ids = genes_df[0].values
+        gene_names = genes_df[1].values
+    else:
+        gene_ids = genes_df[0].values
+        gene_names = gene_ids
+
+    # Read barcodes
+    barcodes_df = pd.read_csv(barcodes_path, sep="\t", header=None)
+    barcodes = barcodes_df[0].values
+
+    # Build AnnData
+    adata = ad.AnnData(
+        X=mat,
+        obs=pd.DataFrame(index=barcodes),
+        var=pd.DataFrame({"gene_ids": gene_ids}, index=gene_names),
+    )
+    adata.var_names_make_unique()
+
+    return adata
 
 
 # ---------------------------------------------------------------------------
