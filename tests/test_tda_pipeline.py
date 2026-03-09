@@ -139,3 +139,60 @@ def test_timecourse_simulation():
     assert "day7" in tc
     assert "month6" in tc
     assert tc["day7"]["expression"].shape[0] > 0
+
+
+def test_gse151511_patient_labels():
+    """Test GSE151511 patient response labels match known GEO annotations."""
+    from src.data.geo_download import (
+        GSE151511_PATIENT_RESPONSE,
+        GSE151511_PATIENT_HISTOLOGY,
+        GSE151511_RAW_RESPONSE,
+        GSE151511_GSM_TO_PATIENT,
+    )
+
+    # 24 patients total
+    assert len(GSE151511_PATIENT_RESPONSE) == 24
+    assert len(GSE151511_GSM_TO_PATIENT) == 24
+
+    # Response counts: 9 CR, 13 PD, 1 PR, 1 NE
+    n_r = sum(1 for v in GSE151511_PATIENT_RESPONSE.values() if v == "responder")
+    n_nr = sum(1 for v in GSE151511_PATIENT_RESPONSE.values() if v == "non_responder")
+    n_unk = sum(1 for v in GSE151511_PATIENT_RESPONSE.values() if v == "unknown")
+    assert n_r == 9, f"Expected 9 responders, got {n_r}"
+    assert n_nr == 14, f"Expected 14 non-responders, got {n_nr}"
+    assert n_unk == 1, f"Expected 1 unknown (NE), got {n_unk}"
+
+    # Verify specific known labels
+    assert GSE151511_PATIENT_RESPONSE["ac01"] == "responder"   # CR
+    assert GSE151511_PATIENT_RESPONSE["ac02"] == "non_responder"  # PD
+    assert GSE151511_PATIENT_RESPONSE["ac06"] == "unknown"     # NE
+    assert GSE151511_PATIENT_RESPONSE["ac20"] == "non_responder"  # PR → non_responder
+
+    # Raw response
+    assert GSE151511_RAW_RESPONSE["ac01"] == "CR"
+    assert GSE151511_RAW_RESPONSE["ac20"] == "PR"
+    assert GSE151511_RAW_RESPONSE["ac06"] == "NE"
+
+    # Histology
+    assert GSE151511_PATIENT_HISTOLOGY["ac01"] == "DLBCL"
+    assert GSE151511_PATIENT_HISTOLOGY["ac05"] == "tFL"
+    assert GSE151511_PATIENT_HISTOLOGY["ac06"] == "PMBCL"
+
+    # All patients axi-cel
+    # GSM→patient mapping
+    assert GSE151511_GSM_TO_PATIENT["GSM4579891"] == "ac01"
+    assert GSE151511_GSM_TO_PATIENT["GSM4579914"] == "ac24"
+
+
+def test_gse151511_fallback_metadata():
+    """Test that fallback metadata builder works for GSE151511."""
+    from src.data.geo_download import _build_fallback_metadata
+
+    meta = _build_fallback_metadata("GSE151511")
+    assert meta is not None
+    assert len(meta) == 24
+    assert "patient_id" in meta.columns
+    assert "response" in meta.columns
+    assert "histology" in meta.columns
+    assert meta.loc["GSM4579891", "patient_id"] == "ac01"
+    assert meta.loc["GSM4579891", "response"] == "responder"

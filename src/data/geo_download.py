@@ -84,6 +84,80 @@ GSE197268_PATIENT_PRODUCT = {
 
 
 # ---------------------------------------------------------------------------
+# Known patient response labels from Deng et al. 2020, Nature Medicine
+# Paper: "Characteristics of anti-CD19 CAR T cell infusion products
+#         associated with efficacy and toxicity in patients with LBCL"
+# PMID: 33020644
+#
+# Response defined as: PET/CT at 3-month follow-up.
+# CR = complete response (responder)
+# PD = progressive disease (non-responder)
+# PR = partial response (non_responder — grouped with PD per paper)
+# NE = not evaluable (excluded from analysis)
+#
+# 24 patients: 16 DLBCL, 6 tFL, 2 PMBCL, all treated with axi-cel
+# 9 CR, 13 PD, 1 PR, 1 NE
+# Source: GEO sample characteristics for GSE151511
+# ---------------------------------------------------------------------------
+
+GSE151511_PATIENT_RESPONSE = {
+    "ac01": "responder",      # DLBCL, CR
+    "ac02": "non_responder",  # DLBCL, PD
+    "ac03": "non_responder",  # DLBCL, PD
+    "ac04": "non_responder",  # DLBCL, PD
+    "ac05": "responder",      # tFL, CR
+    "ac06": "unknown",        # PMBCL, NE (not evaluable)
+    "ac07": "responder",      # DLBCL, CR
+    "ac08": "responder",      # PMBCL, CR
+    "ac09": "responder",      # DLBCL, CR
+    "ac10": "responder",      # tFL, CR
+    "ac11": "non_responder",  # tFL, PD
+    "ac12": "responder",      # DLBCL, CR
+    "ac13": "non_responder",  # DLBCL, PD
+    "ac14": "responder",      # DLBCL, CR
+    "ac15": "non_responder",  # DLBCL, PD
+    "ac16": "responder",      # DLBCL, CR
+    "ac17": "non_responder",  # tFL, PD
+    "ac18": "non_responder",  # DLBCL, PD
+    "ac19": "non_responder",  # tFL, PD
+    "ac20": "non_responder",  # DLBCL, PR (grouped with PD per paper convention)
+    "ac21": "non_responder",  # DLBCL, PD
+    "ac22": "non_responder",  # DLBCL, PD
+    "ac23": "non_responder",  # tFL, PD
+    "ac24": "non_responder",  # DLBCL, PD
+}
+
+GSE151511_PATIENT_HISTOLOGY = {
+    "ac01": "DLBCL", "ac02": "DLBCL", "ac03": "DLBCL", "ac04": "DLBCL",
+    "ac05": "tFL",   "ac06": "PMBCL", "ac07": "DLBCL", "ac08": "PMBCL",
+    "ac09": "DLBCL", "ac10": "tFL",   "ac11": "tFL",   "ac12": "DLBCL",
+    "ac13": "DLBCL", "ac14": "DLBCL", "ac15": "DLBCL", "ac16": "DLBCL",
+    "ac17": "tFL",   "ac18": "DLBCL", "ac19": "tFL",   "ac20": "DLBCL",
+    "ac21": "DLBCL", "ac22": "DLBCL", "ac23": "tFL",   "ac24": "DLBCL",
+}
+
+GSE151511_RAW_RESPONSE = {
+    "ac01": "CR", "ac02": "PD", "ac03": "PD", "ac04": "PD",
+    "ac05": "CR", "ac06": "NE", "ac07": "CR", "ac08": "CR",
+    "ac09": "CR", "ac10": "CR", "ac11": "PD", "ac12": "CR",
+    "ac13": "PD", "ac14": "CR", "ac15": "PD", "ac16": "CR",
+    "ac17": "PD", "ac18": "PD", "ac19": "PD", "ac20": "PR",
+    "ac21": "PD", "ac22": "PD", "ac23": "PD", "ac24": "PD",
+}
+
+GSE151511_GSM_TO_PATIENT = {
+    "GSM4579891": "ac01", "GSM4579892": "ac02", "GSM4579893": "ac03",
+    "GSM4579894": "ac04", "GSM4579895": "ac05", "GSM4579896": "ac06",
+    "GSM4579897": "ac07", "GSM4579898": "ac08", "GSM4579899": "ac09",
+    "GSM4579900": "ac10", "GSM4579901": "ac11", "GSM4579902": "ac12",
+    "GSM4579903": "ac13", "GSM4579904": "ac14", "GSM4579905": "ac15",
+    "GSM4579906": "ac16", "GSM4579907": "ac17", "GSM4579908": "ac18",
+    "GSM4579909": "ac19", "GSM4579910": "ac20", "GSM4579911": "ac21",
+    "GSM4579912": "ac22", "GSM4579913": "ac23", "GSM4579914": "ac24",
+}
+
+
+# ---------------------------------------------------------------------------
 # Dataset metadata
 # ---------------------------------------------------------------------------
 
@@ -102,13 +176,21 @@ DATASETS = {
     },
     "GSE151511": {
         "name": "Deng2020",
-        "paper": "Deng et al., 2020",
-        "description": "CD19 CAR-T longitudinal scRNA-seq",
+        "paper": "Deng et al., Nature Medicine 2020",
+        "description": "CD19 CAR-T axi-cel infusion product scRNA-seq (CapID)",
         "data_type": "10x_mtx",
         "has_response_labels": True,
+        "n_patients": 24,
+        "n_responders": 9,
+        "n_non_responders": 14,
+        "response_definition": "PET/CT at 3 months: CR=responder, PD/PR=non_responder",
+        "cart_product": "axi-cel",
+        "disease": "LBCL (16 DLBCL, 6 tFL, 2 PMBCL)",
         "notes": (
-            "Pre- and post-infusion CAR-T cells with paired clinical data. "
-            "Download the raw 10x matrix files from GEO."
+            "CapID scRNA-seq of axi-cel infusion products from 24 LBCL patients. "
+            "9 CR, 13 PD, 1 PR, 1 NE at 3-month PET/CT. "
+            "Each sample is one patient's infusion product. "
+            "Supplementary files: per-sample 10x matrix tar.gz archives."
         ),
     },
     "GSE117556": {
@@ -138,6 +220,8 @@ def get_data_dir(dataset_id: str) -> Path:
 
 def _build_fallback_metadata(dataset_id: str) -> Optional[pd.DataFrame]:
     """Build metadata from known sample info when GEOparse download fails."""
+    if dataset_id == "GSE151511":
+        return _build_fallback_gse151511()
     if dataset_id != "GSE197268":
         return None
 
@@ -204,6 +288,29 @@ def _build_fallback_metadata(dataset_id: str) -> Optional[pd.DataFrame]:
     }
 
     rows = [{"sample_id": gsm, "title": title} for gsm, title in _SAMPLES.items()]
+    return pd.DataFrame(rows).set_index("sample_id")
+
+
+def _build_fallback_gse151511() -> pd.DataFrame:
+    """Build metadata for GSE151511 (Deng et al. 2020) from known GEO annotations.
+
+    Source: GEO sample characteristics fields for GSE151511
+    24 axi-cel infusion products, 3-month PET/CT response assessment.
+    """
+    print("  Building metadata from known GSE151511 sample info...")
+
+    rows = []
+    for gsm, patient_id in GSE151511_GSM_TO_PATIENT.items():
+        rows.append({
+            "sample_id": gsm,
+            "title": f"scRNA-seq_{patient_id}",
+            "patient_id": patient_id,
+            "histology": GSE151511_PATIENT_HISTOLOGY.get(patient_id, "unknown"),
+            "response_3mo": GSE151511_RAW_RESPONSE.get(patient_id, "unknown"),
+            "response": GSE151511_PATIENT_RESPONSE.get(patient_id, "unknown"),
+            "cart_product": "axi-cel",
+            "timepoint": "infusion",
+        })
     return pd.DataFrame(rows).set_index("sample_id")
 
 
@@ -614,23 +721,36 @@ def parse_response_labels(metadata: pd.DataFrame, dataset_id: str) -> dict:
                 labels[sid] = "unknown"
 
     elif dataset_id == "GSE151511":
-        response_col = _find_column(metadata, ["response", "outcome", "clinical_response"])
-        if response_col:
-            for sid, row in metadata.iterrows():
-                val = str(row[response_col]).upper().strip()
-                if any(r in val for r in ["RESPOND", "CR", "COMPLETE", "PARTIAL", "PR"]):
-                    labels[sid] = "responder"
-                else:
-                    labels[sid] = "non_responder"
-        else:
-            for sid, row in metadata.iterrows():
-                title = str(row.get("title", "")).upper()
-                if any(r in title for r in ["RESPONDER", "CR", "PR"]):
-                    labels[sid] = "responder"
-                elif any(r in title for r in ["NON-RESPONDER", "NR", "PD"]):
-                    labels[sid] = "non_responder"
-                else:
-                    labels[sid] = "unknown"
+        # Use known response labels from Deng et al. 2020 GEO annotations
+        # CR = responder, PD/PR = non_responder, NE = unknown
+        print("  Using patient response labels from Deng et al. 2020")
+        print("  (9 CR responders, 14 PD/PR non-responders, 1 NE excluded)")
+
+        for sid, row in metadata.iterrows():
+            # Try to get patient ID from metadata or from known mapping
+            patient_id = None
+            if "patient_id" in metadata.columns:
+                patient_id = row.get("patient_id")
+            if not patient_id:
+                patient_id = GSE151511_GSM_TO_PATIENT.get(sid)
+            if not patient_id:
+                # Parse from title: "scRNA-seq_ac01" → "ac01"
+                title = str(row.get("title", ""))
+                import re
+                match = re.search(r"(ac\d+)", title)
+                if match:
+                    patient_id = match.group(1)
+
+            if patient_id and patient_id in GSE151511_PATIENT_RESPONSE:
+                labels[sid] = GSE151511_PATIENT_RESPONSE[patient_id]
+                metadata.loc[sid, "patient_id"] = patient_id
+                metadata.loc[sid, "response"] = GSE151511_PATIENT_RESPONSE[patient_id]
+                metadata.loc[sid, "response_3mo"] = GSE151511_RAW_RESPONSE.get(patient_id, "unknown")
+                metadata.loc[sid, "histology"] = GSE151511_PATIENT_HISTOLOGY.get(patient_id, "unknown")
+                metadata.loc[sid, "cart_product"] = "axi-cel"
+                metadata.loc[sid, "timepoint"] = "infusion"
+            else:
+                labels[sid] = "unknown"
 
     elif dataset_id == "GSE117556":
         response_col = _find_column(metadata, ["response", "outcome", "remission"])
